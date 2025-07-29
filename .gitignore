@@ -1,0 +1,10 @@
+NuGet.Config
+bin
+obj
+.vscode 
+node_modules
+dist
+.vscode-test
+.vscode-test/
+.vscode-test/
+.vscode-test/**/*
