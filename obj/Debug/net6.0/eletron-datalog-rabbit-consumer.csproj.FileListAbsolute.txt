@@ -25,3 +25,4 @@ E:\Projetos\EletronSystem\eletron-datalog-rabbit-consumer\eletron-datalog-rabbit
 E:\Projetos\EletronSystem\eletron-datalog-rabbit-consumer\eletron-datalog-rabbit-consumer\obj\Debug\net6.0\eletron-datalog-rabbit-consumer.pdb
 E:\Projetos\EletronSystem\eletron-datalog-rabbit-consumer\eletron-datalog-rabbit-consumer\obj\Debug\net6.0\eletron-datalog-rabbit-consumer.genruntimeconfig.cache
 E:\Projetos\EletronSystem\eletron-datalog-rabbit-consumer\eletron-datalog-rabbit-consumer\obj\Debug\net6.0\ref\eletron-datalog-rabbit-consumer.dll
+E:\Projetos\EletronSystem\eletron-datalog-rabbit-consumer\eletron-datalog-rabbit-consumer\obj\Debug\net6.0\eletron-datalog-rabbit-consumer.sourcelink.json

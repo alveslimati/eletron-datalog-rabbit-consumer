@@ -13,7 +13,7 @@ using System.Reflection;
 [assembly: System.Reflection.AssemblyCompanyAttribute("eletron-datalog-rabbit-consumer")]
 [assembly: System.Reflection.AssemblyConfigurationAttribute("Debug")]
 [assembly: System.Reflection.AssemblyFileVersionAttribute("1.0.0.0")]
-[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+b1ff38fac1f3a2cf35ac2454ec03325b0cdce39b")]
+[assembly: System.Reflection.AssemblyInformationalVersionAttribute("1.0.0+7e628bee337d3978c00cbc02c2b7141f14f7c17b")]
 [assembly: System.Reflection.AssemblyProductAttribute("eletron-datalog-rabbit-consumer")]
 [assembly: System.Reflection.AssemblyTitleAttribute("eletron-datalog-rabbit-consumer")]
 [assembly: System.Reflection.AssemblyVersionAttribute("1.0.0.0")]

@@ -1,9 +1,8 @@
 using RabbitMQ.Client;
-using RabbitMQ.Client.Events;
 using System;
 using System.Text;
 using System.Text.Json;
-using System.Threading.Tasks;
+using System.Threading.Tasks; // Adicione esta diretiva
 
 public class RabbitConsumer
 {
@@ -17,16 +16,17 @@ public class RabbitConsumer
 
     public RabbitConsumer(string hostName, string userName, string password, string queueName, int port, string virtualHost, DatabaseService databaseService)
     {
-        _hostName = hostName ?? throw new ArgumentNullException(nameof(hostName));
-        _userName = userName ?? throw new ArgumentNullException(nameof(userName));
-        _password = password ?? throw new ArgumentNullException(nameof(password));
-        _queueName = queueName ?? throw new ArgumentNullException(nameof(queueName));
+        _hostName = hostName;
+        _userName = userName;
+        _password = password;
+        _queueName = queueName;
         _port = port;
-        _virtualHost = virtualHost ?? throw new ArgumentNullException(nameof(virtualHost));
-        _databaseService = databaseService ?? throw new ArgumentNullException(nameof(databaseService));
+        _virtualHost = virtualHost;
+        _databaseService = databaseService;
     }
 
-    public void ConsumeAndProcessMessages()
+    // --- CORREÇÃO 1: Adicionado 'async Task' ---
+    public async Task ConsumeAndProcessMessagesAsync()
     {
         try
         {
@@ -36,7 +36,9 @@ public class RabbitConsumer
                 UserName = _userName,
                 Password = _password,
                 Port = _port,
-                VirtualHost = _virtualHost
+                VirtualHost = _virtualHost,
+                // --- CORREÇÃO 2: Propriedade de Timeout correta ---
+                ContinuationTimeout = TimeSpan.FromSeconds(30)
             };
 
             using var connection = factory.CreateConnection();
@@ -49,69 +51,60 @@ public class RabbitConsumer
                 autoDelete: false,
                 arguments: null);
 
-            Console.WriteLine($"Iniciando consumo da fila: {_queueName}");
+            Console.WriteLine($"Verificando a fila '{_queueName}' por mensagens...");
+            int messagesProcessed = 0;
 
-            var consumer = new EventingBasicConsumer(channel);
-
-            consumer.Received += async (sender, @event) =>
+            while (true)
             {
-                var body = @event.Body.ToArray();
-                var message = Encoding.UTF8.GetString(body);
+                BasicGetResult? result = channel.BasicGet(_queueName, autoAck: false);
+                if (result == null) break;
 
-                // --- ALTERAÇÃO PRINCIPAL AQUI ---
-                // A mensagem recebida JÁ É o JSON que precisamos.
-                Console.WriteLine($"Mensagem recebida e sendo processada: {message}");
-
+                string message = "";
                 try
                 {
-                    // Desserializa a mensagem DIRETAMENTE para um objeto do tipo MaquinaData
+                    var body = result.Body.ToArray();
+                    message = Encoding.UTF8.GetString(body);
+                    Console.WriteLine($"Mensagem recebida: {message}");
+
                     var maquinaData = JsonSerializer.Deserialize<MaquinaData>(message, new JsonSerializerOptions
                     {
-                        PropertyNameCaseInsensitive = true // Ignorar diferenças de maiúsculas e minúsculas
+                        PropertyNameCaseInsensitive = true
                     });
 
-                    // Verifica se a mensagem foi desserializada com sucesso
                     if (maquinaData == null || string.IsNullOrWhiteSpace(maquinaData.NumeroSerial))
                     {
-                        Console.WriteLine($"Erro: Mensagem inválida ou `NumeroSerial` vazio. Mensagem: {message}");
-                        channel.BasicAck(@event.DeliveryTag, multiple: false);
-                        return;
+                        Console.WriteLine($"[AVISO] Mensagem inválida ou 'NumeroSerial' vazio. Descartando. Mensagem: {message}");
+                        channel.BasicAck(result.DeliveryTag, false); 
+                        continue;
                     }
 
-                    // Busca o maquina_id e cnpj da empresa com base no numero_serial
+                    // --- Agora o 'await' funciona porque o método é async ---
                     var (maquinaId, cnpjEmpresa) = await _databaseService.GetMachineInfoAsync(maquinaData.NumeroSerial!);
                     maquinaData.MaquinaId = maquinaId;
                     maquinaData.CnpjEmpresa = cnpjEmpresa;
                     
-                    // Insere os dados no banco de dados
+                    // --- E aqui também ---
                     await _databaseService.InsertProducaoDataAsync(maquinaData);
 
-                    // Confirma que a mensagem foi processada com sucesso
-                    channel.BasicAck(@event.DeliveryTag, multiple: false);
+                    channel.BasicAck(result.DeliveryTag, false);
+                    messagesProcessed++;
                     Console.WriteLine("Dados processados e inseridos com sucesso.");
-                }
-                catch (JsonException jsonEx)
-                {
-                    Console.WriteLine($"Erro ao desserializar mensagem JSON: {jsonEx.Message}");
-                    channel.BasicAck(@event.DeliveryTag, multiple: false);
                 }
                 catch (Exception ex)
                 {
-                    Console.WriteLine($"Erro ao processar a mensagem: {ex.Message}");
-                    channel.BasicAck(@event.DeliveryTag, multiple: false);
+                    Console.WriteLine($"[ERRO] Falha ao processar a mensagem: {ex.Message}. Mensagem: {message}");
+                    channel.BasicNack(result.DeliveryTag, false, requeue: false);
                 }
-            };
+            }
 
-            channel.BasicConsume(queue: _queueName, autoAck: false, consumer: consumer);
-
-            Console.WriteLine("Pressione qualquer tecla para encerrar o consumidor...");
-            Console.ReadKey();
+            Console.WriteLine(messagesProcessed > 0
+                ? $"Processo finalizado. Total de {messagesProcessed} mensagens processadas."
+                : "Nenhuma mensagem encontrada na fila neste ciclo.");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"Erro ao consumir mensagens: {ex.Message}");
+            Console.WriteLine($"[ERRO CRÍTICO] Falha ao conectar ou consumir mensagens: {ex.Message}");
+            throw; 
         }
     }
 }
-
-// A classe OuterMessage foi removida pois não é mais necessária.
