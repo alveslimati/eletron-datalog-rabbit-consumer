@@ -1,0 +1,5 @@
+E:\Projetos\EletronSystem\eletron-datalog-rabbit-consumer\eletron-datalog-rabbit-consumer\obj\Release\net9.0\eletron-datalog-rabbit-consumer.csproj.AssemblyReference.cache
+E:\Projetos\EletronSystem\eletron-datalog-rabbit-consumer\eletron-datalog-rabbit-consumer\obj\Release\net9.0\eletron-datalog-rabbit-consumer.GeneratedMSBuildEditorConfig.editorconfig
+E:\Projetos\EletronSystem\eletron-datalog-rabbit-consumer\eletron-datalog-rabbit-consumer\obj\Release\net9.0\eletron-datalog-rabbit-consumer.AssemblyInfoInputs.cache
+E:\Projetos\EletronSystem\eletron-datalog-rabbit-consumer\eletron-datalog-rabbit-consumer\obj\Release\net9.0\eletron-datalog-rabbit-consumer.AssemblyInfo.cs
+E:\Projetos\EletronSystem\eletron-datalog-rabbit-consumer\eletron-datalog-rabbit-consumer\obj\Release\net9.0\eletron-datalog-rabbit-consumer.csproj.CoreCompileInputs.cache
