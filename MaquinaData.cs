@@ -3,7 +3,7 @@ using System.Text.Json.Serialization;
 
 public class MaquinaData
 {
-    [JsonPropertyName("numeroSerial")]
+    [JsonPropertyName("numero_serial")]
     public string? NumeroSerial { get; set; }
 
     [JsonPropertyName("operador_id")]
