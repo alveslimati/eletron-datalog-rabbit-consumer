@@ -3,6 +3,7 @@ using System;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks; // Adicione esta diretiva
+using System.Collections.Generic;
 
 public class RabbitConsumer
 {
