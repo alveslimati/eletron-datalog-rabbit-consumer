@@ -107,4 +107,28 @@ public class DatabaseService
             Console.WriteLine($"Erro ao inserir dados na tabela `producao`: {ex.Message}");
         }
     }
+
+    public async Task InsertProducaoLogAsync(string mensagem, string erro)
+    {
+        try
+        {
+            using var connection = new MySqlConnection(_connectionString);
+            await connection.OpenAsync();
+
+            var query = @"
+            INSERT INTO producao_logs (mensagem, erro)
+            VALUES (@mensagem, @erro)";
+
+            using var command = new MySqlCommand(query, connection);
+            command.Parameters.AddWithValue("@mensagem", mensagem);
+            command.Parameters.AddWithValue("@erro", erro);
+
+            await command.ExecuteNonQueryAsync();
+            Console.WriteLine("Mensagem com erro registrada em `producao_logs`.");
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[ERRO - LOG] Falha ao registrar erro no log: {ex.Message}");
+        }
+    }
 }

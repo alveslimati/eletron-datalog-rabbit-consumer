@@ -27,84 +27,131 @@ public class RabbitConsumer
 
     // --- CORREÇÃO 1: Adicionado 'async Task' ---
     public async Task ConsumeAndProcessMessagesAsync()
+{
+    try
     {
-        try
+        var factory = new ConnectionFactory
         {
-            var factory = new ConnectionFactory
+            HostName = _hostName,
+            UserName = _userName,
+            Password = _password,
+            Port = _port,
+            VirtualHost = _virtualHost,
+            ContinuationTimeout = TimeSpan.FromSeconds(30)
+        };
+
+        using var connection = factory.CreateConnection();
+        using var channel = connection.CreateModel();
+
+        // Declaração da fila com Dead Letter Exchange configurado
+        var deadLetterExchange = "dead_letter_exchange";
+        var deadLetterQueue = _queueName + ".dlq";
+
+        channel.ExchangeDeclare(deadLetterExchange, "direct", true);
+        channel.QueueDeclare(
+            queue: _queueName,
+            durable: true,
+            exclusive: false,
+            autoDelete: false,
+            arguments: new Dictionary<string, object>
             {
-                HostName = _hostName,
-                UserName = _userName,
-                Password = _password,
-                Port = _port,
-                VirtualHost = _virtualHost,
-                // --- CORREÇÃO 2: Propriedade de Timeout correta ---
-                ContinuationTimeout = TimeSpan.FromSeconds(30)
-            };
+                { "x-dead-letter-exchange", deadLetterExchange },
+                { "x-dead-letter-routing-key", deadLetterQueue }
+            });
+        channel.QueueDeclare(
+            queue: deadLetterQueue,
+            durable: true,
+            exclusive: false,
+            autoDelete: false,
+            arguments: null);
 
-            using var connection = factory.CreateConnection();
-            using var channel = connection.CreateModel();
+        Console.WriteLine($"Fila configurada: '{_queueName}', com DLQ: '{deadLetterQueue}'.");
+        int messagesProcessed = 0;
 
-            channel.QueueDeclare(
-                queue: _queueName,
-                durable: true,
-                exclusive: false,
-                autoDelete: false,
-                arguments: null);
+        while (true)
+        {
+            BasicGetResult? result = channel.BasicGet(_queueName, autoAck: false);
+            if (result == null) break;
 
-            Console.WriteLine($"Verificando a fila '{_queueName}' por mensagens...");
-            int messagesProcessed = 0;
-
-            while (true)
+            string message = "";
+            try
             {
-                BasicGetResult? result = channel.BasicGet(_queueName, autoAck: false);
-                if (result == null) break;
+                var body = result.Body.ToArray();
+                message = Encoding.UTF8.GetString(body);
+                Console.WriteLine($"Mensagem recebida: {message}");
 
-                string message = "";
-                try
+                var maquinaData = JsonSerializer.Deserialize<MaquinaData>(message, new JsonSerializerOptions
                 {
-                    var body = result.Body.ToArray();
-                    message = Encoding.UTF8.GetString(body);
-                    Console.WriteLine($"Mensagem recebida: {message}");
+                    PropertyNameCaseInsensitive = true
+                });
 
-                    var maquinaData = JsonSerializer.Deserialize<MaquinaData>(message, new JsonSerializerOptions
-                    {
-                        PropertyNameCaseInsensitive = true
-                    });
-
-                    if (maquinaData == null || string.IsNullOrWhiteSpace(maquinaData.NumeroSerial))
-                    {
-                        Console.WriteLine($"[AVISO] Mensagem inválida ou 'NumeroSerial' vazio. Descartando. Mensagem: {message}");
-                        channel.BasicAck(result.DeliveryTag, false); 
-                        continue;
-                    }
-
-                    // --- Agora o 'await' funciona porque o método é async ---
-                    var (maquinaId, cnpjEmpresa) = await _databaseService.GetMachineInfoAsync(maquinaData.NumeroSerial!);
-                    maquinaData.MaquinaId = maquinaId;
-                    maquinaData.CnpjEmpresa = cnpjEmpresa;
-                    
-                    // --- E aqui também ---
-                    await _databaseService.InsertProducaoDataAsync(maquinaData);
-
+                if (maquinaData == null || string.IsNullOrWhiteSpace(maquinaData.NumeroSerial))
+                {
+                    Console.WriteLine($"[AVISO] Mensagem inválida ou 'NumeroSerial' vazio. Descartando. Mensagem: {message}");
                     channel.BasicAck(result.DeliveryTag, false);
-                    messagesProcessed++;
-                    Console.WriteLine("Dados processados e inseridos com sucesso.");
+                    continue;
                 }
-                catch (Exception ex)
+
+                // Processamento e inserção no banco de dados
+                var (maquinaId, cnpjEmpresa) = await _databaseService.GetMachineInfoAsync(maquinaData.NumeroSerial!);
+                maquinaData.MaquinaId = maquinaId;
+                maquinaData.CnpjEmpresa = cnpjEmpresa;
+
+                await _databaseService.InsertProducaoDataAsync(maquinaData);
+
+                channel.BasicAck(result.DeliveryTag, false);
+                messagesProcessed++;
+                Console.WriteLine("Dados processados e inseridos com sucesso.");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[ERRO] Falha ao processar a mensagem: {ex.Message}. Mensagem: {message}");
+
+                // Implementação do Dead Letter em caso de falhas graves ou múltiplos reprocessamentos
+                int retryCount = GetRetryCount(result.BasicProperties); // Obtenha o número de tentativas
+                if (retryCount >= 5)
                 {
-                    Console.WriteLine($"[ERRO] Falha ao processar a mensagem: {ex.Message}. Mensagem: {message}");
-                    channel.BasicNack(result.DeliveryTag, false, requeue: false);
+                    Console.WriteLine($"[DLQ] Mensagem movida para Dead Letter Queue após {retryCount} tentativas. Mensagem: {message}");
+                    await _databaseService.InsertProducaoLogAsync(message, ex.Message);
+                    channel.BasicNack(result.DeliveryTag, false, requeue: false); // Move para DLQ
+                }
+                else
+                {
+                    SetRetryHeader(channel, result.BasicProperties, retryCount + 1); // Incrementa a contagem de tentativas
+                    channel.BasicNack(result.DeliveryTag, false, requeue: true); // Reinsere na fila principal
                 }
             }
+        }
 
-            Console.WriteLine(messagesProcessed > 0
-                ? $"Processo finalizado. Total de {messagesProcessed} mensagens processadas."
-                : "Nenhuma mensagem encontrada na fila neste ciclo.");
-        }
-        catch (Exception ex)
+        Console.WriteLine(messagesProcessed > 0
+            ? $"Processo finalizado. Total de {messagesProcessed} mensagens processadas."
+            : "Nenhuma mensagem encontrada na fila neste ciclo.");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"[ERRO CRÍTICO] Falha ao conectar ou consumir mensagens: {ex.Message}");
+        throw; 
+    }
+}
+
+    /// <summary>
+    /// Obtém o número de tentativas de uma mensagem RabbitMQ usando o cabeçalho.
+    /// </summary>
+    private int GetRetryCount(IBasicProperties properties)
+    {
+        if (properties.Headers != null && properties.Headers.TryGetValue("x-retry-count", out var retryHeader))
         {
-            Console.WriteLine($"[ERRO CRÍTICO] Falha ao conectar ou consumir mensagens: {ex.Message}");
-            throw; 
+            return Convert.ToInt32(Encoding.UTF8.GetString((byte[])retryHeader));
         }
+        return 0;
+    }
+
+    /// <summary>
+    /// Define o cabeçalho para o reprocessamento da mensagem.
+    /// </summary>
+    private void SetRetryHeader(IModel channel, IBasicProperties properties, int retryCount)
+    {
+        properties.Headers ??= new Dictionary<string, object>();
+        properties.Headers["x-retry-count"] = Encoding.UTF8.GetBytes(retryCount.ToString());
     }
 }
