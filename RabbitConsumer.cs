@@ -27,7 +27,7 @@ public class RabbitConsumer
     }
 
     // --- CORREÇÃO 1: Adicionado 'async Task' ---
-    public async Task ConsumeAndProcessMessagesAsync()
+   public async Task ConsumeAndProcessMessagesAsync()
 {
     try
     {
@@ -67,6 +67,7 @@ public class RabbitConsumer
             arguments: null);
 
         Console.WriteLine($"Fila configurada: '{_queueName}', com DLQ: '{deadLetterQueue}'.");
+
         int messagesProcessed = 0;
 
         while (true)
@@ -88,22 +89,26 @@ public class RabbitConsumer
                     PropertyNameCaseInsensitive = true
                 });
 
+                // Valida a mensagem
                 if (maquinaData == null || string.IsNullOrWhiteSpace(maquinaData.NumeroSerial))
                 {
                     Console.WriteLine($"[AVISO] Mensagem inválida ou 'NumeroSerial' vazio. Descartando. Mensagem: {message}");
-                    channel.BasicAck(result.DeliveryTag, false); // Reconhece e descarta mensagem
+                    channel.BasicAck(result.DeliveryTag, false); // Mensagem descartada
                     continue;
                 }
 
-                // Processa a mensagem
+                // Processa a mensagem no banco
                 var (maquinaId, cnpjEmpresa) = await _databaseService.GetMachineInfoAsync(maquinaData.NumeroSerial!);
                 maquinaData.MaquinaId = maquinaId;
                 maquinaData.CnpjEmpresa = cnpjEmpresa;
 
+                // Insere dados na produção
                 await _databaseService.InsertProducaoDataAsync(maquinaData);
 
-                channel.BasicAck(result.DeliveryTag, false); // Reconhece sucesso na mensagem
+                // Mensagem processada com sucesso
+                channel.BasicAck(result.DeliveryTag, false); // Remove mensagem da fila
                 messagesProcessed++;
+
                 Console.WriteLine("Dados processados e inseridos com sucesso.");
             }
             catch (Exception ex)
@@ -114,14 +119,14 @@ public class RabbitConsumer
                 int retryCount = GetRetryCount(result.BasicProperties);
                 if (retryCount >= 5)
                 {
-                    // Move para Dead Letter Queue
-                    Console.WriteLine($"[DLQ] Mensagem movida para a Dead Letter Queue após {retryCount} tentativas. Mensagem: {message}");
+                    // Move mensagem para Dead Letter Queue
+                    Console.WriteLine($"[DLQ] Mensagem movida para Dead Letter Queue após {retryCount} tentativas. Mensagem: {message}");
                     await _databaseService.InsertProducaoLogAsync(message, ex.Message);
-                    channel.BasicNack(result.DeliveryTag, false, requeue: false); // Não reinsere na fila
+                    channel.BasicNack(result.DeliveryTag, false, requeue: false); // DLQ
                 }
                 else
                 {
-                    // Reinsere na fila com cabeçalho de retry atualizado
+                    // Incrementa header de retry e reinsere
                     SetRetryHeader(channel, result.BasicProperties, retryCount + 1);
                     channel.BasicNack(result.DeliveryTag, false, requeue: true); // Tenta novamente
                 }
