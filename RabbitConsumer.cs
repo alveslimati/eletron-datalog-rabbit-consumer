@@ -44,7 +44,7 @@ public class RabbitConsumer
         using var connection = factory.CreateConnection();
         using var channel = connection.CreateModel();
 
-        // Declaração da fila com Dead Letter Exchange configurado
+        // Declaração de filas e Dead Letter Exchange
         var deadLetterExchange = "dead_letter_exchange";
         var deadLetterQueue = _queueName + ".dlq";
 
@@ -71,8 +71,9 @@ public class RabbitConsumer
 
         while (true)
         {
+            // Consome a mensagem manualmente
             BasicGetResult? result = channel.BasicGet(_queueName, autoAck: false);
-            if (result == null) break;
+            if (result == null) break; // Caso não existam mensagens
 
             string message = "";
             try
@@ -81,6 +82,7 @@ public class RabbitConsumer
                 message = Encoding.UTF8.GetString(body);
                 Console.WriteLine($"Mensagem recebida: {message}");
 
+                // Deserializa a mensagem
                 var maquinaData = JsonSerializer.Deserialize<MaquinaData>(message, new JsonSerializerOptions
                 {
                     PropertyNameCaseInsensitive = true
@@ -89,18 +91,18 @@ public class RabbitConsumer
                 if (maquinaData == null || string.IsNullOrWhiteSpace(maquinaData.NumeroSerial))
                 {
                     Console.WriteLine($"[AVISO] Mensagem inválida ou 'NumeroSerial' vazio. Descartando. Mensagem: {message}");
-                    channel.BasicAck(result.DeliveryTag, false);
+                    channel.BasicAck(result.DeliveryTag, false); // Reconhece e descarta mensagem
                     continue;
                 }
 
-                // Processamento e inserção no banco de dados
+                // Processa a mensagem
                 var (maquinaId, cnpjEmpresa) = await _databaseService.GetMachineInfoAsync(maquinaData.NumeroSerial!);
                 maquinaData.MaquinaId = maquinaId;
                 maquinaData.CnpjEmpresa = cnpjEmpresa;
 
                 await _databaseService.InsertProducaoDataAsync(maquinaData);
 
-                channel.BasicAck(result.DeliveryTag, false);
+                channel.BasicAck(result.DeliveryTag, false); // Reconhece sucesso na mensagem
                 messagesProcessed++;
                 Console.WriteLine("Dados processados e inseridos com sucesso.");
             }
@@ -108,18 +110,20 @@ public class RabbitConsumer
             {
                 Console.WriteLine($"[ERRO] Falha ao processar a mensagem: {ex.Message}. Mensagem: {message}");
 
-                // Implementação do Dead Letter em caso de falhas graves ou múltiplos reprocessamentos
-                int retryCount = GetRetryCount(result.BasicProperties); // Obtenha o número de tentativas
+                // Incrementa o contador de tentativas
+                int retryCount = GetRetryCount(result.BasicProperties);
                 if (retryCount >= 5)
                 {
-                    Console.WriteLine($"[DLQ] Mensagem movida para Dead Letter Queue após {retryCount} tentativas. Mensagem: {message}");
+                    // Move para Dead Letter Queue
+                    Console.WriteLine($"[DLQ] Mensagem movida para a Dead Letter Queue após {retryCount} tentativas. Mensagem: {message}");
                     await _databaseService.InsertProducaoLogAsync(message, ex.Message);
-                    channel.BasicNack(result.DeliveryTag, false, requeue: false); // Move para DLQ
+                    channel.BasicNack(result.DeliveryTag, false, requeue: false); // Não reinsere na fila
                 }
                 else
                 {
-                    SetRetryHeader(channel, result.BasicProperties, retryCount + 1); // Incrementa a contagem de tentativas
-                    channel.BasicNack(result.DeliveryTag, false, requeue: true); // Reinsere na fila principal
+                    // Reinsere na fila com cabeçalho de retry atualizado
+                    SetRetryHeader(channel, result.BasicProperties, retryCount + 1);
+                    channel.BasicNack(result.DeliveryTag, false, requeue: true); // Tenta novamente
                 }
             }
         }
@@ -131,10 +135,8 @@ public class RabbitConsumer
     catch (Exception ex)
     {
         Console.WriteLine($"[ERRO CRÍTICO] Falha ao conectar ou consumir mensagens: {ex.Message}");
-        throw; 
     }
 }
-
     /// <summary>
     /// Obtém o número de tentativas de uma mensagem RabbitMQ usando o cabeçalho.
     /// </summary>
