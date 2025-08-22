@@ -77,60 +77,61 @@ public class RabbitConsumer
             if (result == null) break; // Caso não existam mensagens
 
             string message = "";
-            try
-            {
-                var body = result.Body.ToArray();
-                message = Encoding.UTF8.GetString(body);
-                Console.WriteLine($"Mensagem recebida: {message}");
-
-                // Deserializa a mensagem
-                var maquinaData = JsonSerializer.Deserialize<MaquinaData>(message, new JsonSerializerOptions
+                try
                 {
-                    PropertyNameCaseInsensitive = true
-                });
+                    var body = result.Body.ToArray();
+                    message = Encoding.UTF8.GetString(body);
+                    Console.WriteLine($"Mensagem recebida: {message}");
 
-                // Valida a mensagem
-                if (maquinaData == null || string.IsNullOrWhiteSpace(maquinaData.NumeroSerial))
-                {
-                    Console.WriteLine($"[AVISO] Mensagem inválida ou 'NumeroSerial' vazio. Descartando. Mensagem: {message}");
-                    channel.BasicAck(result.DeliveryTag, false); // Mensagem descartada
-                    continue;
-                }
+                    // Deserializa a mensagem
+                    var maquinaData = JsonSerializer.Deserialize<MaquinaData>(message, new JsonSerializerOptions
+                    {
+                        PropertyNameCaseInsensitive = true
+                    });
 
-                // Processa a mensagem no banco
-                var (maquinaId, cnpjEmpresa) = await _databaseService.GetMachineInfoAsync(maquinaData.NumeroSerial!);
-                maquinaData.MaquinaId = maquinaId;
-                maquinaData.CnpjEmpresa = cnpjEmpresa;
+                    // Valida a mensagem
+                    if (maquinaData == null || string.IsNullOrWhiteSpace(maquinaData.NumeroSerial))
+                    {
+                        Console.WriteLine($"[AVISO] Mensagem inválida ou 'NumeroSerial' vazio. Descartando. Mensagem: {message}");
+                        channel.BasicAck(result.DeliveryTag, false); // Mensagem descartada
+                        continue;
+                    }
 
-                // Insere dados na produção
-                await _databaseService.InsertProducaoDataAsync(maquinaData);
+                    // Processa a mensagem no banco
+                    var (maquinaId, cnpjEmpresa) = await _databaseService.GetMachineInfoAsync(maquinaData.NumeroSerial!);
+                    maquinaData.MaquinaId = maquinaId;
+                    maquinaData.CnpjEmpresa = cnpjEmpresa;
 
-                // Mensagem processada com sucesso
-                channel.BasicAck(result.DeliveryTag, false); // Remove mensagem da fila
-                messagesProcessed++;
+                    // Insere dados na produção
+                    await _databaseService.InsertProducaoDataAsync(maquinaData);
 
-                Console.WriteLine("Dados processados e inseridos com sucesso.");
+                    // Mensagem processada com sucesso
+                    channel.BasicAck(result.DeliveryTag, false); // Remove mensagem da fila
+                    messagesProcessed++;
+
+                    Console.WriteLine("Dados processados e inseridos com sucesso.");
+                    //Exibir log de mensagens
             }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"[ERRO] Falha ao processar a mensagem: {ex.Message}. Mensagem: {message}");
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"[ERRO] Falha ao processar a mensagem: {ex.Message}. Mensagem: {message}");
 
-                // Incrementa o contador de tentativas
-                int retryCount = GetRetryCount(result.BasicProperties);
-                if (retryCount >= 5)
-                {
-                    // Move mensagem para Dead Letter Queue
-                    Console.WriteLine($"[DLQ] Mensagem movida para Dead Letter Queue após {retryCount} tentativas. Mensagem: {message}");
-                    await _databaseService.InsertProducaoLogAsync(message, ex.Message);
-                    channel.BasicNack(result.DeliveryTag, false, requeue: false); // DLQ
+                    // Incrementa o contador de tentativas
+                    int retryCount = GetRetryCount(result.BasicProperties);
+                    if (retryCount >= 5)
+                    {
+                        // Move mensagem para Dead Letter Queue
+                        Console.WriteLine($"[DLQ] Mensagem movida para Dead Letter Queue após {retryCount} tentativas. Mensagem: {message}");
+                        await _databaseService.InsertProducaoLogAsync(message, ex.Message);
+                        channel.BasicNack(result.DeliveryTag, false, requeue: false); // DLQ
+                    }
+                    else
+                    {
+                        // Incrementa header de retry e reinsere
+                        SetRetryHeader(channel, result.BasicProperties, retryCount + 1);
+                        channel.BasicNack(result.DeliveryTag, false, requeue: true); // Tenta novamente
+                    }
                 }
-                else
-                {
-                    // Incrementa header de retry e reinsere
-                    SetRetryHeader(channel, result.BasicProperties, retryCount + 1);
-                    channel.BasicNack(result.DeliveryTag, false, requeue: true); // Tenta novamente
-                }
-            }
         }
 
         Console.WriteLine(messagesProcessed > 0
