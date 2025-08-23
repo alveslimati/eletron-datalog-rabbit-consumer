@@ -67,18 +67,18 @@ public class RabbitConsumer
             arguments: null);
 
         Console.WriteLine($"Fila configurada: '{_queueName}', com DLQ: '{deadLetterQueue}'.");
+
         int messagesProcessed = 0;
 
         while (true)
         {
             // Consome a mensagem manualmente
             BasicGetResult? result = channel.BasicGet(_queueName, autoAck: false);
-            if (result == null) break; // Nenhuma mensagem na fila
+            if (result == null) break; // Caso não existam mensagens
 
             string message = "";
             try
             {
-                // Decodifica a mensagem recebida
                 var body = result.Body.ToArray();
                 message = Encoding.UTF8.GetString(body);
                 Console.WriteLine($"Mensagem recebida: {message}");
@@ -93,7 +93,7 @@ public class RabbitConsumer
                 if (maquinaData == null || string.IsNullOrWhiteSpace(maquinaData.NumeroSerial))
                 {
                     Console.WriteLine($"[AVISO] Mensagem inválida ou 'NumeroSerial' vazio. Descartando. Mensagem: {message}");
-                    channel.BasicAck(result.DeliveryTag, false); // Reconhece e descarta mensagens inválidas
+                    channel.BasicAck(result.DeliveryTag, false); // Mensagem descartada
                     continue;
                 }
 
@@ -108,6 +108,7 @@ public class RabbitConsumer
                 // Mensagem processada com sucesso
                 channel.BasicAck(result.DeliveryTag, false); // Remove mensagem da fila
                 messagesProcessed++;
+
                 Console.WriteLine("Dados processados e inseridos com sucesso.");
             }
             catch (Exception ex)
@@ -116,19 +117,18 @@ public class RabbitConsumer
 
                 // Incrementa o contador de tentativas
                 int retryCount = GetRetryCount(result.BasicProperties);
-
                 if (retryCount >= 5)
                 {
                     // Move mensagem para Dead Letter Queue
                     Console.WriteLine($"[DLQ] Mensagem movida para Dead Letter Queue após {retryCount} tentativas. Mensagem: {message}");
                     await _databaseService.InsertProducaoLogAsync(message, ex.Message);
-                    channel.BasicNack(result.DeliveryTag, false, requeue: false); // Move diretamente para DLQ
+                    channel.BasicNack(result.DeliveryTag, false, requeue: false); // DLQ
                 }
                 else
                 {
-                    // Reinsere a mensagem na fila com um contador de tentativas incrementado
+                    // Incrementa header de retry e reinsere
                     SetRetryHeader(channel, result.BasicProperties, retryCount + 1);
-                    channel.BasicNack(result.DeliveryTag, false, requeue: true); // Reinsere na fila para reprocessamento
+                    channel.BasicNack(result.DeliveryTag, false, requeue: true); // Tenta novamente
                 }
             }
         }
@@ -142,6 +142,17 @@ public class RabbitConsumer
         Console.WriteLine($"[ERRO CRÍTICO] Falha ao conectar ou consumir mensagens: {ex.Message}");
     }
 }
+    /// <summary>
+    /// Obtém o número de tentativas de uma mensagem RabbitMQ usando o cabeçalho.
+    /// </summary>
+    private int GetRetryCount(IBasicProperties properties)
+    {
+        if (properties.Headers != null && properties.Headers.TryGetValue("x-retry-count", out var retryHeader))
+        {
+            return Convert.ToInt32(Encoding.UTF8.GetString((byte[])retryHeader));
+        }
+        return 0;
+    }
 
     /// <summary>
     /// Define o cabeçalho para o reprocessamento da mensagem.
